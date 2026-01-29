@@ -13,8 +13,16 @@ exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
 
 echo "=== Starting Clawdbot Setup ==="
 
+# Wait for automatic apt processes to finish (unattended-upgrades, etc.)
+echo "Waiting for apt locks to be released..."
+while fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+  echo "Waiting for other apt process to finish..."
+  sleep 5
+done
+echo "apt locks released, proceeding..."
+
 # System updates
-apt-get update
+apt-get update -y
 apt-get upgrade -y
 
 # Install dependencies
