@@ -62,7 +62,7 @@ print_banner() {
   echo ""
   echo -e "${BLUE}╔═══════════════════════════════════════════════════════════╗${NC}"
   echo -e "${BLUE}║                                                           ║${NC}"
-  echo -e "${BLUE}║   ${GREEN}🤖 Clawdbot on AWS - Installer${BLUE}                         ║${NC}"
+  echo -e "${BLUE}║   ${GREEN}Clawdbot on AWS - Installer${BLUE}                             ║${NC}"
   echo -e "${BLUE}║                                                           ║${NC}"
   echo -e "${BLUE}║   24/7 AI Agent running on EC2 with Discord integration   ║${NC}"
   echo -e "${BLUE}║                                                           ║${NC}"
@@ -438,28 +438,30 @@ gather_parameters() {
 prepare_template() {
   info "Preparing CloudFormation template..."
 
-  # Read userdata.sh, replace placeholders, and indent for YAML
-  USERDATA_CONTENT=$(cat userdata.sh | \
-    sed 's/{{DATA_BUCKET}}/${DataBucket}/g' | \
-    sed 's/{{AWS_REGION}}/${AWS::Region}/g')
+  # Read userdata.sh and replace placeholders
+  sed -e 's/{{DATA_BUCKET}}/${DataBucket}/g' \
+      -e 's/{{AWS_REGION}}/${AWS::Region}/g' \
+      userdata.sh > userdata-prepared.tmp
 
-  # Create the final template by replacing {{USERDATA}} placeholder
-  # Using awk for multiline replacement
-  awk -v userdata="$USERDATA_CONTENT" '
-    /\{\{USERDATA\}\}/ {
-      # Get the indentation from the placeholder line
-      match($0, /^[[:space:]]*/)
-      indent = substr($0, RSTART, RLENGTH)
-      # Print each line of userdata with proper indentation
-      n = split(userdata, lines, "\n")
-      for (i = 1; i <= n; i++) {
-        print indent lines[i]
-      }
-      next
-    }
-    { print }
-  ' cfn-template.yml > cfn-template-final.yml
+  # Get the line number of {{USERDATA}} placeholder
+  PLACEHOLDER_LINE=$(grep -n '{{USERDATA}}' cfn-template.yml | cut -d: -f1)
 
+  # Get the indentation from the placeholder line
+  INDENT=$(sed -n "${PLACEHOLDER_LINE}p" cfn-template.yml | sed 's/{{USERDATA}}.*//')
+
+  # Create final template
+  {
+    # Print lines before {{USERDATA}}
+    head -n $((PLACEHOLDER_LINE - 1)) cfn-template.yml
+    # Print userdata with proper indentation
+    while IFS= read -r line; do
+      printf '%s%s\n' "$INDENT" "$line"
+    done < userdata-prepared.tmp
+    # Print lines after {{USERDATA}}
+    tail -n +$((PLACEHOLDER_LINE + 1)) cfn-template.yml
+  } > cfn-template-final.yml
+
+  rm -f userdata-prepared.tmp
   success "Template prepared with embedded UserData"
 }
 
