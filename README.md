@@ -2,6 +2,26 @@
 
 Deploy [Molt Bot](https://docs.molt.bot) - a 24/7 AI Agent - on AWS EC2 with one command.
 
+## Table of Contents
+
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Prerequisites](#prerequisites)
+- [Architecture](#architecture)
+- [Usage](#usage)
+- [Cost Breakdown](#cost-breakdown)
+- [Configuration](#configuration)
+  - [Instance Types](#instance-types)
+  - [EBS Volume Sizes](#ebs-volume-sizes)
+  - [Availability Levels](#availability-levels)
+  - [Backup Frequency](#backup-frequency)
+  - [Security Levels](#security-levels)
+- [Security](#security)
+- [Troubleshooting](#troubleshooting)
+- [Manual Deployment](#manual-deployment)
+- [License](#license)
+- [Contributing](#contributing)
+
 ## Features
 
 - 🚀 One-liner deployment via CloudFormation
