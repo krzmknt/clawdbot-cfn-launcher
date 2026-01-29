@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Clawdbot EC2 UserData script
+# Molt Bot EC2 UserData script
 #
 # This script is embedded into the CloudFormation template at deployment time.
 # Placeholders ({{PLACEHOLDER}}) are replaced by install.sh.
@@ -11,7 +11,7 @@ set -euxo pipefail
 # Logging
 exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
 
-echo "=== Starting Clawdbot Setup ==="
+echo "=== Starting Molt Bot Setup ==="
 
 # Wait for automatic apt processes to finish (unattended-upgrades, etc.)
 echo "Waiting for apt locks to be released..."
@@ -27,93 +27,87 @@ apt-get upgrade -y
 
 # Install dependencies
 apt-get install -y \
-  docker.io \
-  docker-compose \
   awscli \
   jq \
   unzip \
   curl \
   git
 
-# Start Docker
-systemctl enable docker
-systemctl start docker
+#============================================================================
+# Install Node.js 22 (required for Molt Bot)
+#============================================================================
+echo "Installing Node.js 22..."
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+apt-get install -y nodejs
 
-# Add ubuntu user to docker group
-usermod -aG docker ubuntu
+# Verify Node.js installation
+node --version
+npm --version
 
-# Create Clawdbot directory
-mkdir -p /opt/clawdbot
-chown ubuntu:ubuntu /opt/clawdbot
-cd /opt/clawdbot
+#============================================================================
+# Install Molt Bot
+#============================================================================
+echo "Installing Molt Bot..."
 
-# Create .env file (API keys to be configured via Clawdbot WebUI)
-cat > /opt/clawdbot/.env << EOF
-S3_DATA_BUCKET={{DATA_BUCKET}}
-AWS_REGION={{AWS_REGION}}
-EOF
+# Create moltbot directory
+mkdir -p /opt/moltbot
+chown ubuntu:ubuntu /opt/moltbot
 
-chmod 600 /opt/clawdbot/.env
-chown ubuntu:ubuntu /opt/clawdbot/.env
+# Install moltbot globally
+npm install -g moltbot@latest
 
-# Create docker-compose.yml
-cat > /opt/clawdbot/docker-compose.yml << 'COMPOSE_EOF'
-version: '3.8'
+# Run onboarding and install daemon as ubuntu user
+# Note: --install-daemon sets up systemd service automatically
+su - ubuntu -c "cd /opt/moltbot && moltbot onboard --install-daemon" || true
 
-services:
-  clawdbot:
-    image: ghcr.io/clawdbot/clawdbot:latest
-    container_name: clawdbot
-    restart: unless-stopped
-    env_file:
-      - .env
-    volumes:
-      - ./data:/app/data
-      - ./config:/app/config
-      - ./skills:/app/skills
-    ports:
-      - "3000:3000"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-COMPOSE_EOF
-
-# Create data directories
-mkdir -p /opt/clawdbot/{data,config,skills}
-chown -R ubuntu:ubuntu /opt/clawdbot
-
-# Create systemd service for auto-start
-cat > /etc/systemd/system/clawdbot.service << 'SERVICE_EOF'
+#============================================================================
+# Create systemd service (fallback if onboard doesn't create it)
+#============================================================================
+if [ ! -f /etc/systemd/system/moltbot.service ]; then
+  cat > /etc/systemd/system/moltbot.service << 'SERVICE_EOF'
 [Unit]
-Description=Clawdbot AI Agent
-Requires=docker.service
-After=docker.service
+Description=Molt Bot AI Agent
+After=network.target
 
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/opt/clawdbot
-ExecStart=/usr/bin/docker-compose up
-ExecStop=/usr/bin/docker-compose down
+WorkingDirectory=/opt/moltbot
+ExecStart=/usr/bin/moltbot start
 Restart=always
 RestartSec=10
+Environment=NODE_ENV=production
 
 [Install]
 WantedBy=multi-user.target
 SERVICE_EOF
 
-# Enable and start service
-systemctl daemon-reload
-systemctl enable clawdbot
-systemctl start clawdbot
+  systemctl daemon-reload
+  systemctl enable moltbot
+fi
+
+#============================================================================
+# Configure environment
+#============================================================================
+cat > /opt/moltbot/.env << EOF
+S3_DATA_BUCKET={{DATA_BUCKET}}
+AWS_REGION={{AWS_REGION}}
+EOF
+
+chmod 600 /opt/moltbot/.env
+chown ubuntu:ubuntu /opt/moltbot/.env
+
+#============================================================================
+# Start Molt Bot
+#============================================================================
+systemctl start moltbot || true
 
 # Note: Backup is handled by EventBridge + SSM Run Command (configured in CloudFormation)
-# Backup script is not needed here as SSM Document handles it
 
+#============================================================================
 # Install CloudWatch agent for monitoring
+#============================================================================
+echo "Installing CloudWatch agent..."
 wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/arm64/latest/amazon-cloudwatch-agent.deb
 dpkg -i amazon-cloudwatch-agent.deb
 
@@ -124,7 +118,7 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CW_E
     "run_as_user": "root"
   },
   "metrics": {
-    "namespace": "Clawdbot",
+    "namespace": "MoltBot",
     "metrics_collected": {
       "cpu": {
         "measurement": ["cpu_usage_idle", "cpu_usage_user", "cpu_usage_system"],
@@ -145,7 +139,7 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CW_E
         "collect_list": [
           {
             "file_path": "/var/log/user-data.log",
-            "log_group_name": "/clawdbot/system",
+            "log_group_name": "/moltbot/system",
             "log_stream_name": "user-data"
           }
         ]
@@ -161,4 +155,5 @@ CW_EOF
   -s \
   -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
 
-echo "=== Clawdbot Setup Complete ==="
+echo "=== Molt Bot Setup Complete ==="
+echo "Access the dashboard with: moltbot dashboard"

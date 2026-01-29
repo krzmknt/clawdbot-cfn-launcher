@@ -673,8 +673,8 @@ Resources:
                 - !Sub "BUCKET=${DataBucket}"
                 - "TIMESTAMP=$(date +%Y%m%d-%H%M%S)"
                 - "echo \"Starting backup to s3://$BUCKET/backups/$TIMESTAMP/\""
-                - "aws s3 sync /opt/clawdbot/data s3://$BUCKET/backups/$TIMESTAMP/data/ --quiet"
-                - "aws s3 sync /opt/clawdbot/config s3://$BUCKET/backups/$TIMESTAMP/config/ --quiet"
+                - "aws s3 sync /opt/moltbot/data s3://$BUCKET/backups/$TIMESTAMP/data/ --quiet"
+                - "aws s3 sync /opt/moltbot/config s3://$BUCKET/backups/$TIMESTAMP/config/ --quiet"
                 - "echo \"Backup completed: $TIMESTAMP\""
 
   #============================================================================
