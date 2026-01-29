@@ -191,6 +191,7 @@ download_files() {
   curl -fsSL "$REPO_BASE_URL/src/logs.sh" -o logs.sh
   curl -fsSL "$REPO_BASE_URL/src/destroy.sh" -o destroy.sh
   curl -fsSL "$REPO_BASE_URL/src/list.sh" -o list.sh
+  curl -fsSL "$REPO_BASE_URL/src/restart.sh" -o restart.sh
   chmod +x *.sh
   success "Downloaded helper scripts"
 
@@ -203,6 +204,11 @@ download_files() {
 gather_parameters() {
   info "Gathering deployment parameters..."
   echo ""
+
+  # When piped from curl, stdin is not a tty, so we need to use /dev/tty
+  if [[ ! -t 0 ]]; then
+    exec < /dev/tty
+  fi
 
   # Stack name
   read -p "Stack Name [$STACK_NAME]: " input_stack
