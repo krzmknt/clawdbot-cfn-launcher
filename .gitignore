@@ -2,7 +2,7 @@
 .config
 
 # Local backups
-clawdbot-backup-*/
+moltbot-backup-*/
 
 # Prepared templates
 *-final.yml

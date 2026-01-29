@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# View Clawdbot logs
+# View Moltbot logs
 #
 # Usage:
 #   ./logs.sh <stack-name>              # Tail application logs
@@ -82,15 +82,15 @@ done
 
 case $LOG_TYPE in
   app)
-    LOG_GROUP="/clawdbot/application"
+    LOG_GROUP="/moltbot/${STACK_NAME}"
     ;;
   system)
-    LOG_GROUP="/clawdbot/system"
+    LOG_GROUP="/moltbot/system"
     ;;
   all)
     info "Available log groups:"
     aws logs describe-log-groups \
-      --log-group-name-prefix "/clawdbot" \
+      --log-group-name-prefix "/moltbot" \
       --region "$REGION" \
       --query 'logGroups[*].logGroupName' \
       --output table

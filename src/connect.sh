@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Connect to Clawdbot EC2 instance via Session Manager
+# Connect to Moltbot EC2 instance via Session Manager
 #
 # Usage:
 #   ./connect.sh <stack-name>                    # Shell access
@@ -96,7 +96,7 @@ INSTANCE_ID=$(aws autoscaling describe-auto-scaling-groups \
 
 if $PORT_FORWARD; then
   info "Starting port forward: localhost:$LOCAL_PORT -> EC2:$REMOTE_PORT"
-  info "Access Clawdbot WebUI at: http://localhost:$LOCAL_PORT"
+  info "Access Moltbot WebUI at: http://localhost:$LOCAL_PORT"
   echo ""
   aws ssm start-session \
     --target "$INSTANCE_ID" \

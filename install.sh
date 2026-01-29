@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# Clawdbot on AWS - One-liner Installer
+# Moltbot on AWS - One-liner Installer
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/krzmknt/clawdbot-cfn-launcher/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/krzmknt/moltbot-cfn-launcher/main/install.sh | bash
 #
 # Or with options:
-#   curl -fsSL ... | bash -s -- --stack-name my-clawdbot --region us-west-2
+#   curl -fsSL ... | bash -s -- --stack-name my-moltbot --region us-west-2
 #
 
 set -e
@@ -14,9 +14,9 @@ set -e
 #============================================================================
 # Configuration
 #============================================================================
-REPO_BASE_URL="https://raw.githubusercontent.com/krzmknt/clawdbot-cfn-launcher/main"
-INSTALL_DIR="${CLAWDBOT_INSTALL_DIR:-$HOME/.clawdbot-cfn-launcher}"
-STACK_NAME="clawdbot"
+REPO_BASE_URL="https://raw.githubusercontent.com/krzmknt/moltbot-cfn-launcher/main"
+INSTALL_DIR="${MOLTBOT_INSTALL_DIR:-$HOME/.moltbot-cfn-launcher}"
+STACK_NAME="moltbot"
 REGION=""
 
 # Colors
@@ -62,7 +62,7 @@ print_banner() {
   echo ""
   echo -e "${BLUE}╔═══════════════════════════════════════════════════════════╗${NC}"
   echo -e "${BLUE}║                                                           ║${NC}"
-  echo -e "${BLUE}║   ${GREEN}Clawdbot on AWS - Installer${BLUE}                             ║${NC}"
+  echo -e "${BLUE}║   ${GREEN}Moltbot on AWS - Installer${BLUE}                             ║${NC}"
   echo -e "${BLUE}║                                                           ║${NC}"
   echo -e "${BLUE}║   24/7 AI Agent running on EC2 with Discord integration   ║${NC}"
   echo -e "${BLUE}║                                                           ║${NC}"
@@ -75,7 +75,7 @@ usage() {
 Usage: $0 [OPTIONS]
 
 Options:
-  --install-dir DIR    Installation directory (default: ~/.clawdbot-cfn-launcher)
+  --install-dir DIR    Installation directory (default: ~/.moltbot-cfn-launcher)
   --help               Show this help message
 
 Example:
@@ -540,7 +540,7 @@ show_results() {
   echo ""
   echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
   echo -e "${GREEN}║                                                           ║${NC}"
-  echo -e "${GREEN}║   Clawdbot Deployment Complete!                           ║${NC}"
+  echo -e "${GREEN}║   Moltbot Deployment Complete!                           ║${NC}"
   echo -e "${GREEN}║                                                           ║${NC}"
   echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
   echo ""
@@ -548,7 +548,7 @@ show_results() {
   echo ""
   echo -e "${YELLOW}Next Steps:${NC}"
   echo ""
-  echo "  1. Wait a few minutes for Clawdbot to start"
+  echo "  1. Wait a few minutes for Moltbot to start"
   echo "  2. Access WebUI to configure API keys:"
   echo "     $INSTALL_DIR/connect.sh $STACK_NAME --port-forward"
   echo "     Then open: http://localhost:3000"

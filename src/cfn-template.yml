@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "Clawdbot - 24/7 AI Agent on EC2 with Discord integration"
+Description: "Moltbot - 24/7 AI Agent on EC2 with Discord integration"
 
 Parameters:
   InstanceType:
@@ -259,10 +259,10 @@ Resources:
   #============================================================================
   # Security Group
   #============================================================================
-  ClawdbotSecurityGroup:
+  MoltbotSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security group for Clawdbot EC2 instance
+      GroupDescription: Security group for Moltbot EC2 instance
       VpcId: !Ref VPC
       # No inbound rules - all access via Session Manager
       SecurityGroupEgress:
@@ -286,8 +286,8 @@ Resources:
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
-          SourceSecurityGroupId: !Ref ClawdbotSecurityGroup
-          Description: Allow HTTPS from Clawdbot instances
+          SourceSecurityGroupId: !Ref MoltbotSecurityGroup
+          Description: Allow HTTPS from Moltbot instances
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-endpoint-sg"
@@ -360,7 +360,7 @@ Resources:
   #============================================================================
   # IAM Role for EC2
   #============================================================================
-  ClawdbotRole:
+  MoltbotRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Sub "${AWS::StackName}-role"
@@ -396,14 +396,14 @@ Resources:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/clawdbot/*"
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/moltbot/*"
 
-  ClawdbotInstanceProfile:
+  MoltbotInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       InstanceProfileName: !Sub "${AWS::StackName}-instance-profile"
       Roles:
-        - !Ref ClawdbotRole
+        - !Ref MoltbotRole
 
   #============================================================================
   # IAM Role for VPC Flow Logs (Security Medium+)
@@ -432,7 +432,7 @@ Resources:
                   - logs:PutLogEvents
                   - logs:DescribeLogGroups
                   - logs:DescribeLogStreams
-                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/clawdbot/vpc-flow-logs:*"
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/moltbot/${AWS::StackName}/vpc-flow-logs:*"
 
   #============================================================================
   # S3 Bucket for Data Persistence
@@ -527,17 +527,21 @@ Resources:
   #============================================================================
   # CloudWatch Log Groups
   #============================================================================
-  ClawdbotLogGroup:
+  MoltbotLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
-      LogGroupName: /clawdbot/application
+      LogGroupName: !Sub "/moltbot/${AWS::StackName}"
       RetentionInDays: 30
 
   FlowLogLogGroup:
     Type: AWS::Logs::LogGroup
     Condition: IsSecurityHighOrHigher
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
-      LogGroupName: /clawdbot/vpc-flow-logs
+      LogGroupName: !Sub "/moltbot/${AWS::StackName}/vpc-flow-logs"
       RetentionInDays: 30
 
   #============================================================================
@@ -591,7 +595,7 @@ Resources:
   #============================================================================
   # Launch Template (All Availability Levels)
   #============================================================================
-  ClawdbotLaunchTemplate:
+  MoltbotLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     DependsOn:
       - DataBucket
@@ -601,16 +605,16 @@ Resources:
         InstanceType: !Ref InstanceType
         ImageId: !Sub "{{resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/arm64/hvm/ebs-gp2/ami-id}}"
         IamInstanceProfile:
-          Arn: !GetAtt ClawdbotInstanceProfile.Arn
+          Arn: !GetAtt MoltbotInstanceProfile.Arn
         SecurityGroupIds:
-          - !Ref ClawdbotSecurityGroup
+          - !Ref MoltbotSecurityGroup
         BlockDeviceMappings:
           - DeviceName: /dev/sda1
             Ebs:
               VolumeSize: !Ref DataVolumeSize
               VolumeType: gp3
               Encrypted: true
-              DeleteOnTermination: false
+              DeleteOnTermination: true
         TagSpecifications:
           - ResourceType: instance
             Tags:
@@ -623,13 +627,13 @@ Resources:
   #============================================================================
   # Auto Scaling Group (All Availability Levels)
   #============================================================================
-  ClawdbotAutoScalingGroup:
+  MoltbotAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
       AutoScalingGroupName: !Sub "${AWS::StackName}-asg"
       LaunchTemplate:
-        LaunchTemplateId: !Ref ClawdbotLaunchTemplate
-        Version: !GetAtt ClawdbotLaunchTemplate.LatestVersionNumber
+        LaunchTemplateId: !Ref MoltbotLaunchTemplate
+        Version: !GetAtt MoltbotLaunchTemplate.LatestVersionNumber
       MinSize: 1
       MaxSize: !If [IsAvailabilityHigh, 2, 1]
       DesiredCapacity: 1
@@ -662,7 +666,7 @@ Resources:
       DocumentType: Command
       Content:
         schemaVersion: "2.2"
-        description: "Backup Clawdbot data to S3"
+        description: "Backup Moltbot data to S3"
         mainSteps:
           - action: aws:runShellScript
             name: backup
@@ -728,7 +732,7 @@ Resources:
             RunCommandTargets:
               - Key: "tag:aws:autoscaling:groupName"
                 Values:
-                  - !Ref ClawdbotAutoScalingGroup
+                  - !Ref MoltbotAutoScalingGroup
 
   BackupScheduleHourly:
     Type: AWS::Events::Rule
@@ -746,7 +750,7 @@ Resources:
             RunCommandTargets:
               - Key: "tag:aws:autoscaling:groupName"
                 Values:
-                  - !Ref ClawdbotAutoScalingGroup
+                  - !Ref MoltbotAutoScalingGroup
 
   BackupSchedule5Min:
     Type: AWS::Events::Rule
@@ -764,7 +768,7 @@ Resources:
             RunCommandTargets:
               - Key: "tag:aws:autoscaling:groupName"
                 Values:
-                  - !Ref ClawdbotAutoScalingGroup
+                  - !Ref MoltbotAutoScalingGroup
 
 #============================================================================
 # Outputs
@@ -772,12 +776,12 @@ Resources:
 Outputs:
   AutoScalingGroupName:
     Description: Auto Scaling Group Name
-    Value: !Ref ClawdbotAutoScalingGroup
+    Value: !Ref MoltbotAutoScalingGroup
 
   SSMConnectCommand:
     Description: Connect via Session Manager
     Value: !Sub |
-      INSTANCE_ID=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names ${ClawdbotAutoScalingGroup} --query 'AutoScalingGroups[0].Instances[0].InstanceId' --output text --region ${AWS::Region})
+      INSTANCE_ID=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names ${MoltbotAutoScalingGroup} --query 'AutoScalingGroups[0].Instances[0].InstanceId' --output text --region ${AWS::Region})
       aws ssm start-session --target $INSTANCE_ID --region ${AWS::Region}
 
   DataBucketName:
@@ -786,7 +790,7 @@ Outputs:
 
   LogGroupName:
     Description: CloudWatch Log Group
-    Value: !Ref ClawdbotLogGroup
+    Value: !Ref MoltbotLogGroup
 
   FlowLogGroupName:
     Condition: IsSecurityHighOrHigher

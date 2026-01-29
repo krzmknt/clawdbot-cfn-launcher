@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Restart Clawdbot EC2 instance
+# Restart Moltbot EC2 instance
 #
 # Usage:
 #   ./restart.sh <stack-name>                  # Reboot instance

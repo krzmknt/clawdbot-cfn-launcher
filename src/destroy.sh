@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Destroy Clawdbot CloudFormation stack
+# Destroy Moltbot CloudFormation stack
 #
 # Usage:
 #   ./destroy.sh <stack-name>
@@ -144,7 +144,7 @@ if [[ -n "$DATA_BUCKET" && "$DATA_BUCKET" != "None" ]]; then
       if ! $FORCE; then
         read -p "Download latest backup to local before deletion? (y/N): " download_backup
         if [[ "$download_backup" =~ ^[Yy]$ ]]; then
-          DOWNLOAD_DIR="./clawdbot-backup-${STACK_NAME}-${LATEST_BACKUP}"
+          DOWNLOAD_DIR="./moltbot-backup-${STACK_NAME}-${LATEST_BACKUP}"
           info "Downloading backup to: $DOWNLOAD_DIR"
           mkdir -p "$DOWNLOAD_DIR"
           aws s3 cp "s3://$DATA_BUCKET/backups/$LATEST_BACKUP" "$DOWNLOAD_DIR" --recursive

@@ -1,6 +1,6 @@
-# Clawdbot on AWS
+# Moltbot on AWS
 
-Deploy [Clawdbot](https://github.com/clawdbot/clawdbot) - a 24/7 AI Agent - on AWS EC2 with one command.
+Deploy [Molt Bot](https://docs.molt.bot) - a 24/7 AI Agent - on AWS EC2 with one command.
 
 ## Features
 
@@ -20,7 +20,7 @@ Deploy [Clawdbot](https://github.com/clawdbot/clawdbot) - a 24/7 AI Agent - on A
 > ```
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/krzmknt/clawdbot-cfn-launcher/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/krzmknt/moltbot-cfn-launcher/main/install.sh | bash
 ```
 
 The installer will interactively guide you through configuration options including stack name, region, instance size, availability level, and security level.
@@ -40,13 +40,10 @@ The installer will interactively guide you through configuration options includi
 │  │  ┌───────────────────────────────────────────┐  │  │
 │  │  │                    EC2                    │  │  │
 │  │  │  ┌─────────────────────────────────────┐  │  │  │
-│  │  │  │               Docker                │  │  │  │
-│  │  │  │  ┌───────────────────────────────┐  │  │  │  │
-│  │  │  │  │          Clawdbot             │  │  │  │  │
-│  │  │  │  │  • Discord Bot                │  │  │  │  │
-│  │  │  │  │  • Claude API                 │  │  │  │  │
-│  │  │  │  │  • Web UI (:3000)             │  │  │  │  │
-│  │  │  │  └───────────────────────────────┘  │  │  │  │
+│  │  │  │            Moltbot (systemd)        │  │  │  │
+│  │  │  │  • Discord Bot                      │  │  │  │
+│  │  │  │  • Claude API                       │  │  │  │
+│  │  │  │  • Web Dashboard                    │  │  │  │
 │  │  │  └─────────────────────────────────────┘  │  │  │
 │  │  └───────────────────────────────────────────┘  │  │
 │  └─────────────────────────────────────────────────┘  │
@@ -61,30 +58,30 @@ The installer will interactively guide you through configuration options includi
 
 ## Usage
 
-After deployment, helper scripts are installed to `~/.clawdbot-cfn-launcher/`:
+After deployment, helper scripts are installed to `~/.moltbot-cfn-launcher/`:
 
 ```bash
 # List all deployed stacks
-~/.clawdbot-cfn-launcher/list.sh
+~/.moltbot-cfn-launcher/list.sh
 
 # Connect to instance (shell)
-~/.clawdbot-cfn-launcher/connect.sh <stack-name>
+~/.moltbot-cfn-launcher/connect.sh <stack-name>
 
 # Port forward to access WebUI
-~/.clawdbot-cfn-launcher/connect.sh <stack-name> --port-forward
+~/.moltbot-cfn-launcher/connect.sh <stack-name> --port-forward
 # Then open: http://localhost:3000
 
 # View logs
-~/.clawdbot-cfn-launcher/logs.sh <stack-name>
+~/.moltbot-cfn-launcher/logs.sh <stack-name>
 
 # Restart instance (reboot)
-~/.clawdbot-cfn-launcher/restart.sh <stack-name>
+~/.moltbot-cfn-launcher/restart.sh <stack-name>
 
 # Restart instance (terminate and replace)
-~/.clawdbot-cfn-launcher/restart.sh <stack-name> --replace
+~/.moltbot-cfn-launcher/restart.sh <stack-name> --replace
 
 # Destroy stack (deletes everything including S3 data)
-~/.clawdbot-cfn-launcher/destroy.sh <stack-name>
+~/.moltbot-cfn-launcher/destroy.sh <stack-name>
 ```
 
 ## Cost Breakdown
@@ -192,20 +189,20 @@ Backup frequency can be changed later via CloudFormation stack update.
    aws ec2 describe-instances --instance-ids <id> --query 'Reservations[*].Instances[*].State.Name'
    ```
 
-### Clawdbot not starting
+### Moltbot not starting
 
 1. Check logs:
 
    ```bash
-   ~/.clawdbot-cfn-launcher/logs.sh <stack-name> --system
+   ~/.moltbot-cfn-launcher/logs.sh <stack-name> --system
    ```
 
-2. Connect and check Docker:
+2. Connect and check systemd service:
    ```bash
-   ~/.clawdbot-cfn-launcher/connect.sh <stack-name>
+   ~/.moltbot-cfn-launcher/connect.sh <stack-name>
    # Then on instance:
-   docker ps
-   docker logs clawdbot
+   systemctl status moltbot
+   journalctl -u moltbot -f
    ```
 
 ## Manual Deployment
@@ -214,11 +211,11 @@ If you prefer manual deployment:
 
 ```bash
 # Download template
-curl -O https://raw.githubusercontent.com/krzmknt/clawdbot-cfn-launcher/main/src/cfn-template.yml
+curl -O https://raw.githubusercontent.com/krzmknt/moltbot-cfn-launcher/main/src/cfn-template.yml
 
 # Deploy
 aws cloudformation create-stack \
-  --stack-name clawdbot \
+  --stack-name moltbot \
   --template-body file://cfn-template.yml \
   --capabilities CAPABILITY_NAMED_IAM \
   --parameters \

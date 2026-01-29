@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# List all Clawdbot CloudFormation stacks
+# List all Moltbot CloudFormation stacks
 #
 # Usage:
 #   ./list.sh              # List stacks in table format
@@ -49,17 +49,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-info "Listing Clawdbot stacks in region: $REGION"
+info "Listing Moltbot stacks in region: $REGION"
 echo ""
 
-# Get stacks with "clawdbot" in their description
+# Get stacks with "Moltbot" in their description
 STACKS=$(aws cloudformation describe-stacks \
   --region "$REGION" \
-  --query 'Stacks[?contains(Description, `Clawdbot`) || contains(StackName, `clawdbot`)].{Name:StackName,Status:StackStatus,Created:CreationTime}' \
+  --query 'Stacks[?contains(Description, `Moltbot`) || contains(StackName, `moltbot`)].{Name:StackName,Status:StackStatus,Created:CreationTime}' \
   --output json 2>/dev/null)
 
 if [[ "$STACKS" == "[]" || -z "$STACKS" ]]; then
-  echo "No Clawdbot stacks found."
+  echo "No Moltbot stacks found."
   echo ""
   echo "To deploy a new stack, run:"
   echo "  ./install.sh"
