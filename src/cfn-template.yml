@@ -1,0 +1,821 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Clawdbot - 24/7 AI Agent on EC2 with Discord integration"
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t4g.small
+    AllowedValues:
+      - t4g.micro
+      - t4g.small
+      - t4g.medium
+      - t4g.large
+      - t4g.xlarge
+      - t4g.2xlarge
+    Description: EC2 instance type (ARM-based for cost efficiency)
+
+  DataVolumeSize:
+    Type: Number
+    Default: 20
+    MinValue: 8
+    MaxValue: 16000
+    Description: EBS volume size in GB for persistent data (gp3 supports up to 16TB)
+
+  AvailabilityLevel:
+    Type: String
+    Default: low
+    AllowedValues:
+      - low
+      - medium
+      - high
+    Description: |
+      low: Single instance, manual recovery (RTO ~1h, RPO ~1h)
+      medium: Auto Scaling Group, single AZ (RTO ~10min, RPO ~5min)
+      high: ASG + Multi-AZ, auto failover (RTO ~2min, RPO ~1min)
+
+  SecurityLevel:
+    Type: String
+    Default: normal
+    AllowedValues:
+      - normal
+      - high
+      - highest
+    Description: |
+      normal: Public subnet, SSM only, encrypted EBS
+      high: Public subnet, + VPC Flow Logs, CloudTrail
+      highest: Private subnet, + NAT Gateway, VPC Endpoints, GuardDuty
+
+  BackupFrequency:
+    Type: String
+    Default: daily
+    AllowedValues:
+      - none
+      - daily
+      - hourly
+      - 5min
+    Description: |
+      none: No automatic backups (S3 bucket still created)
+      daily: Once per day at 3:00 AM UTC
+      hourly: Every hour
+      5min: Every 5 minutes
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "EC2 Configuration"
+        Parameters:
+          - InstanceType
+          - DataVolumeSize
+      - Label:
+          default: "Availability & Security"
+        Parameters:
+          - AvailabilityLevel
+          - SecurityLevel
+      - Label:
+          default: "Backup"
+        Parameters:
+          - BackupFrequency
+
+Conditions:
+  # Availability conditions
+  IsAvailabilityHigh: !Equals [!Ref AvailabilityLevel, "high"]
+
+  # Security conditions
+  IsSecurityHighOrHigher: !Or
+    - !Equals [!Ref SecurityLevel, "high"]
+    - !Equals [!Ref SecurityLevel, "highest"]
+  IsSecurityHighest: !Equals [!Ref SecurityLevel, "highest"]
+
+  # Combined conditions for subnet selection
+  UsePrivateSubnetWithMultiAZ: !And
+    - !Condition IsSecurityHighest
+    - !Condition IsAvailabilityHigh
+
+  # Backup conditions
+  IsBackupEnabled: !Not [!Equals [!Ref BackupFrequency, "none"]]
+  IsBackupDaily: !Equals [!Ref BackupFrequency, "daily"]
+  IsBackupHourly: !Equals [!Ref BackupFrequency, "hourly"]
+  IsBackup5Min: !Equals [!Ref BackupFrequency, "5min"]
+
+Resources:
+  #============================================================================
+  # VPC & Networking
+  #============================================================================
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-vpc"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-igw"
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-subnet-1"
+
+  # Second subnet for high availability (Availability High)
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: IsAvailabilityHigh
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-subnet-2"
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-rt"
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: IsAvailabilityHigh
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  #============================================================================
+  # Private Subnet & NAT Gateway (Security Highest)
+  #============================================================================
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    Condition: IsSecurityHighest
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-nat-eip"
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Condition: IsSecurityHighest
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-nat"
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Condition: IsSecurityHighest
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-subnet-1"
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: IsSecurityHighest
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.11.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-subnet-2"
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Condition: IsSecurityHighest
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-rt"
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Condition: IsSecurityHighest
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: IsSecurityHighest
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: IsSecurityHighest
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  #============================================================================
+  # Security Group
+  #============================================================================
+  ClawdbotSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Clawdbot EC2 instance
+      VpcId: !Ref VPC
+      # No inbound rules - all access via Session Manager
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-sg"
+
+  #============================================================================
+  # VPC Endpoints Security Group (Security High)
+  #============================================================================
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: IsSecurityHighest
+    Properties:
+      GroupDescription: Security group for VPC Endpoints
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref ClawdbotSecurityGroup
+          Description: Allow HTTPS from Clawdbot instances
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-endpoint-sg"
+
+  #============================================================================
+  # VPC Endpoints (Security High)
+  #============================================================================
+  SSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: IsSecurityHighest
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssm"
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  SSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: IsSecurityHighest
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssmmessages"
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  EC2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: IsSecurityHighest
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ec2messages"
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  SecretsManagerEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: IsSecurityHighest
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.secretsmanager"
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: IsSecurityHighest
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PublicRouteTable
+
+  #============================================================================
+  # IAM Role for EC2
+  #============================================================================
+  ClawdbotRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: S3DataAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt DataBucket.Arn
+                  - !Sub "${DataBucket.Arn}/*"
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/clawdbot/*"
+
+  ClawdbotInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "${AWS::StackName}-instance-profile"
+      Roles:
+        - !Ref ClawdbotRole
+
+  #============================================================================
+  # IAM Role for VPC Flow Logs (Security Medium+)
+  #============================================================================
+  FlowLogRole:
+    Type: AWS::IAM::Role
+    Condition: IsSecurityHighOrHigher
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-flowlog-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: vpc-flow-logs.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: FlowLogPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/clawdbot/vpc-flow-logs:*"
+
+  #============================================================================
+  # S3 Bucket for Data Persistence
+  #============================================================================
+  DataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-data-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: MoveToIA
+            Status: Enabled
+            Transitions:
+              - StorageClass: STANDARD_IA
+                TransitionInDays: 30
+          - Id: MoveToGlacier
+            Status: Enabled
+            Transitions:
+              - StorageClass: GLACIER
+                TransitionInDays: 90
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-data"
+
+  #============================================================================
+  # S3 Bucket for CloudTrail (Security Medium+)
+  #============================================================================
+  CloudTrailBucket:
+    Type: AWS::S3::Bucket
+    Condition: IsSecurityHighOrHigher
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-cloudtrail-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldLogs
+            Status: Enabled
+            ExpirationInDays: 365
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-cloudtrail"
+
+  CloudTrailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: IsSecurityHighOrHigher
+    Properties:
+      Bucket: !Ref CloudTrailBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AWSCloudTrailAclCheck
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt CloudTrailBucket.Arn
+            Condition:
+              StringEquals:
+                aws:SourceArn: !Sub "arn:aws:cloudtrail:${AWS::Region}:${AWS::AccountId}:trail/${AWS::StackName}-trail"
+          - Sid: AWSCloudTrailWrite
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "${CloudTrailBucket.Arn}/AWSLogs/${AWS::AccountId}/*"
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+                aws:SourceArn: !Sub "arn:aws:cloudtrail:${AWS::Region}:${AWS::AccountId}:trail/${AWS::StackName}-trail"
+
+  #============================================================================
+  # CloudWatch Log Groups
+  #============================================================================
+  ClawdbotLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /clawdbot/application
+      RetentionInDays: 30
+
+  FlowLogLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: IsSecurityHighOrHigher
+    Properties:
+      LogGroupName: /clawdbot/vpc-flow-logs
+      RetentionInDays: 30
+
+  #============================================================================
+  # VPC Flow Logs (Security Medium+)
+  #============================================================================
+  VPCFlowLog:
+    Type: AWS::EC2::FlowLog
+    Condition: IsSecurityHighOrHigher
+    Properties:
+      ResourceId: !Ref VPC
+      ResourceType: VPC
+      TrafficType: ALL
+      LogDestinationType: cloud-watch-logs
+      LogGroupName: !Ref FlowLogLogGroup
+      DeliverLogsPermissionArn: !GetAtt FlowLogRole.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-flow-log"
+
+  #============================================================================
+  # CloudTrail (Security Medium+)
+  #============================================================================
+  CloudTrail:
+    Type: AWS::CloudTrail::Trail
+    Condition: IsSecurityHighOrHigher
+    DependsOn: CloudTrailBucketPolicy
+    Properties:
+      TrailName: !Sub "${AWS::StackName}-trail"
+      S3BucketName: !Ref CloudTrailBucket
+      IsLogging: true
+      EnableLogFileValidation: true
+      IncludeGlobalServiceEvents: true
+      IsMultiRegionTrail: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-trail"
+
+  #============================================================================
+  # GuardDuty (Security High)
+  #============================================================================
+  GuardDutyDetector:
+    Type: AWS::GuardDuty::Detector
+    Condition: IsSecurityHighest
+    Properties:
+      Enable: true
+      FindingPublishingFrequency: FIFTEEN_MINUTES
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-guardduty"
+
+  #============================================================================
+  # Launch Template (All Availability Levels)
+  #============================================================================
+  ClawdbotLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    DependsOn:
+      - DataBucket
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-launch-template"
+      LaunchTemplateData:
+        InstanceType: !Ref InstanceType
+        ImageId: !Sub "{{resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/arm64/hvm/ebs-gp2/ami-id}}"
+        IamInstanceProfile:
+          Arn: !GetAtt ClawdbotInstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref ClawdbotSecurityGroup
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs:
+              VolumeSize: !Ref DataVolumeSize
+              VolumeType: gp3
+              Encrypted: true
+              DeleteOnTermination: false
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub "${AWS::StackName}-instance"
+        UserData:
+          Fn::Base64: !Sub |
+            {{USERDATA}}
+
+  #============================================================================
+  # Auto Scaling Group (All Availability Levels)
+  #============================================================================
+  ClawdbotAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-asg"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref ClawdbotLaunchTemplate
+        Version: !GetAtt ClawdbotLaunchTemplate.LatestVersionNumber
+      MinSize: 1
+      MaxSize: !If [IsAvailabilityHigh, 2, 1]
+      DesiredCapacity: 1
+      VPCZoneIdentifier: !If
+        - UsePrivateSubnetWithMultiAZ
+        - - !Ref PrivateSubnet
+          - !Ref PrivateSubnet2
+        - !If
+          - IsAvailabilityHigh
+          - - !Ref PublicSubnet
+            - !Ref PublicSubnet2
+          - !If
+            - IsSecurityHighest
+            - - !Ref PrivateSubnet
+            - - !Ref PublicSubnet
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 300
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-asg"
+          PropagateAtLaunch: true
+
+  #============================================================================
+  # SSM Document for Backup
+  #============================================================================
+  BackupSSMDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      Name: !Sub "${AWS::StackName}-backup"
+      DocumentType: Command
+      Content:
+        schemaVersion: "2.2"
+        description: "Backup Clawdbot data to S3"
+        mainSteps:
+          - action: aws:runShellScript
+            name: backup
+            inputs:
+              runCommand:
+                - "#!/bin/bash"
+                - "set -e"
+                - !Sub "BUCKET=${DataBucket}"
+                - "TIMESTAMP=$(date +%Y%m%d-%H%M%S)"
+                - "echo \"Starting backup to s3://$BUCKET/backups/$TIMESTAMP/\""
+                - "aws s3 sync /opt/clawdbot/data s3://$BUCKET/backups/$TIMESTAMP/data/ --quiet"
+                - "aws s3 sync /opt/clawdbot/config s3://$BUCKET/backups/$TIMESTAMP/config/ --quiet"
+                - "echo \"Backup completed: $TIMESTAMP\""
+
+  #============================================================================
+  # IAM Role for EventBridge to invoke SSM
+  #============================================================================
+  BackupEventBridgeRole:
+    Type: AWS::IAM::Role
+    Condition: IsBackupEnabled
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-backup-eventbridge-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeSSMRunCommand
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:document/${BackupSSMDocument}"
+                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  - !Sub "arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript"
+
+  #============================================================================
+  # EventBridge Rules for Backup (conditional based on frequency)
+  #============================================================================
+  BackupScheduleDaily:
+    Type: AWS::Events::Rule
+    Condition: IsBackupDaily
+    Properties:
+      Name: !Sub "${AWS::StackName}-backup-daily"
+      Description: "Daily backup at 3:00 AM UTC"
+      ScheduleExpression: "cron(0 3 * * ? *)"
+      State: ENABLED
+      Targets:
+        - Id: BackupTarget
+          Arn: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:document/${BackupSSMDocument}"
+          RoleArn: !GetAtt BackupEventBridgeRole.Arn
+          RunCommandParameters:
+            RunCommandTargets:
+              - Key: "tag:aws:autoscaling:groupName"
+                Values:
+                  - !Ref ClawdbotAutoScalingGroup
+
+  BackupScheduleHourly:
+    Type: AWS::Events::Rule
+    Condition: IsBackupHourly
+    Properties:
+      Name: !Sub "${AWS::StackName}-backup-hourly"
+      Description: "Hourly backup"
+      ScheduleExpression: "rate(1 hour)"
+      State: ENABLED
+      Targets:
+        - Id: BackupTarget
+          Arn: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:document/${BackupSSMDocument}"
+          RoleArn: !GetAtt BackupEventBridgeRole.Arn
+          RunCommandParameters:
+            RunCommandTargets:
+              - Key: "tag:aws:autoscaling:groupName"
+                Values:
+                  - !Ref ClawdbotAutoScalingGroup
+
+  BackupSchedule5Min:
+    Type: AWS::Events::Rule
+    Condition: IsBackup5Min
+    Properties:
+      Name: !Sub "${AWS::StackName}-backup-5min"
+      Description: "Backup every 5 minutes"
+      ScheduleExpression: "rate(5 minutes)"
+      State: ENABLED
+      Targets:
+        - Id: BackupTarget
+          Arn: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:document/${BackupSSMDocument}"
+          RoleArn: !GetAtt BackupEventBridgeRole.Arn
+          RunCommandParameters:
+            RunCommandTargets:
+              - Key: "tag:aws:autoscaling:groupName"
+                Values:
+                  - !Ref ClawdbotAutoScalingGroup
+
+#============================================================================
+# Outputs
+#============================================================================
+Outputs:
+  AutoScalingGroupName:
+    Description: Auto Scaling Group Name
+    Value: !Ref ClawdbotAutoScalingGroup
+
+  SSMConnectCommand:
+    Description: Connect via Session Manager
+    Value: !Sub |
+      INSTANCE_ID=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names ${ClawdbotAutoScalingGroup} --query 'AutoScalingGroups[0].Instances[0].InstanceId' --output text --region ${AWS::Region})
+      aws ssm start-session --target $INSTANCE_ID --region ${AWS::Region}
+
+  DataBucketName:
+    Description: S3 bucket for data persistence
+    Value: !Ref DataBucket
+
+  LogGroupName:
+    Description: CloudWatch Log Group
+    Value: !Ref ClawdbotLogGroup
+
+  FlowLogGroupName:
+    Condition: IsSecurityHighOrHigher
+    Description: VPC Flow Logs Log Group
+    Value: !Ref FlowLogLogGroup
+
+  CloudTrailBucketName:
+    Condition: IsSecurityHighOrHigher
+    Description: CloudTrail S3 Bucket
+    Value: !Ref CloudTrailBucket
+
+  GuardDutyDetectorId:
+    Condition: IsSecurityHighest
+    Description: GuardDuty Detector ID
+    Value: !Ref GuardDutyDetector
+
+  AvailabilityLevel:
+    Description: Configured Availability Level
+    Value: !Ref AvailabilityLevel
+
+  SecurityLevel:
+    Description: Configured Security Level
+    Value: !Ref SecurityLevel
+
+  MonthlyCostEstimate:
+    Description: Estimated monthly cost (USD)
+    Value: !Sub |
+      Instance: ${InstanceType}
+      EBS: ${DataVolumeSize}GB gp3
+      Availability: ${AvailabilityLevel}
+      Security: ${SecurityLevel}
+      See documentation for detailed cost breakdown
